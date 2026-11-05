@@ -1,0 +1,12 @@
+{
+  "name": "Balorant",
+  "short_name": "Balorant",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0f15",
+  "theme_color": "#0a0f15",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

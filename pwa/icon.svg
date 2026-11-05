@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" stroke-linecap="round" stroke-linejoin="round">
+  <!-- same artwork as res/drawable/ic_bg.xml + ic_fg.xml -->
+  <path d="M0,0h108v108h-108z" fill="#0f1923"/>
+  <path d="M50,0L108,0L108,70z" fill="#ff4655"/>
+  <path d="M0,84L30,108L0,108z" fill="#ff4655" fill-opacity="0.55"/>
+  <path d="M18,0L108,90" stroke="#ece8e1" stroke-width="0.8" stroke-opacity="0.12"/>
+  <path d="M0,40L68,108" stroke="#ece8e1" stroke-width="0.8" stroke-opacity="0.08"/>
+  <g transform="translate(54 58) scale(0.82) translate(-54 -58)">
+    <path d="M54,27v-9" stroke="#8b979f" stroke-width="2.4" fill="none"/>
+    <path d="M50.4,15 a3.6,3.6 0 1 0 7.2,0 a3.6,3.6 0 1 0 -7.2,0z" fill="#ff4655"/>
+    <path d="M33,58l-9,7M75,58l9,7" stroke="#8b979f" stroke-width="3" fill="none"/>
+    <path d="M42,72l-4,13h32l-4,-13z" fill="#1b2733"/>
+    <path d="M38,85h32" stroke="#2ee6b6" stroke-width="1.6" stroke-opacity="0.7"/>
+    <path d="M54,26L77,38.5V63.5L54,76L31,63.5V38.5Z" fill="#2a3a48"/>
+    <path d="M54,26L77,38.5V63.5L54,76L31,63.5V38.5Z" stroke="#ece8e1" stroke-width="1.6" stroke-opacity="0.85" fill="none"/>
+    <path d="M31,38.5h46v5.5h-46z" fill="#ff4655"/>
+    <path d="M77,39.5l11,-5l-1.5,5.5l-9.5,3.5zM77,42.5l10,4.5l-4,3l-6,-3.5z" fill="#ff4655"/>
+    <path d="M37,48h34l-2,10h-30z" fill="#0a0f15"/>
+    <path d="M42,51h9v4h-9zM57,51h9v4h-9z" fill="#2ee6b6"/>
+    <path d="M45,64q9,6 18,0" stroke="#ece8e1" stroke-width="2.2" fill="none"/>
+  </g>
+</svg>

@@ -2,8 +2,16 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Balorant</title>
+<!-- iOS / browser install (PWA); ignored inside the Android app -->
+<meta name="theme-color" content="#0a0f15">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Balorant">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.png">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
@@ -273,6 +281,21 @@
   .btn:active { transform:scale(.97); }
   .btn.danger { background:var(--red); border-color:var(--red); color:var(--ink); }
 
+  /* ---------- iPhone notch / home bar (env() is 0 on Android) ---------- */
+  body { padding-top:env(safe-area-inset-top, 0px); padding-bottom:calc(104px + env(safe-area-inset-bottom, 0px)); }
+  .detail { padding-top:env(safe-area-inset-top, 0px); }
+  nav, .sheetBox { bottom:calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .upd { bottom:calc(90px + env(safe-area-inset-bottom, 0px)); }
+
+  /* ---------- web login (PWA only) ---------- */
+  #boot.auth { opacity:1; visibility:visible; transform:none; } /* error handlers call hideBoot() after a 401; login stays up */
+  .login { width:min(380px, calc(100vw - 32px)); padding:22px 20px 18px; }
+  .login h2.t { display:block; margin:0 0 10px; color:var(--bone); letter-spacing:0; font-size:28px; } .login h2.t::before, .login h2.t::after { display:none; }
+  .login ol { padding-left:20px; color:var(--dim); margin-bottom:16px; } .login li { margin-bottom:6px; } .login li b { color:var(--bone); }
+  .login a.btn { text-align:center; text-decoration:none; }
+  .login input { width:100%; margin-top:8px; padding:13px 12px; background:var(--ink); color:var(--bone); border:1px solid var(--line); font:16px var(--body); }
+  .login .lErr { color:var(--red); font:500 12px var(--mono); margin-top:10px; min-height:1em; }
+
   /* ---------- motion ---------- */
   @keyframes spin { to { transform:rotate(360deg); } }
   @keyframes pulse { 50% { opacity:.45; transform:scale(.85); } }
@@ -376,6 +399,63 @@
   </div>
 </div>
 
+<script>
+// iOS / browser (PWA) stand-in for the Android bridge. Safari can't catch Riot's login redirect,
+// so the user pastes the playvalorant.com link back in. Riot hosts send no CORS headers, so those
+// calls go through /api/riot; everything else (valorant-api.com, GitHub) is fetched directly.
+if (!window.Native) (() => {
+  const AUTH = 'https://auth.riotgames.com/authorize?redirect_uri=https%3A%2F%2Fplayvalorant.com%2Fopt_in'
+    + '&client_id=play-valorant-web-prod&response_type=token%20id_token&nonce=1&scope=account%20openid';
+  const KEY = 'riotLogin';
+  const riot = u => /^https:\/\/([a-z0-9-]+\.)*(riotgames\.com|pvp\.net)\//.test(u);
+  const load = () => { try { const s = JSON.parse(localStorage.getItem(KEY)); return s && s.exp > Date.now() ? s : null; } catch { return null; } };
+  const drop = () => { try { localStorage.removeItem(KEY); } catch {} };
+  // the main script reads the token from the hash, exactly like on Android
+  const s = load();
+  history.replaceState(null, '', location.pathname + (s ? '#' + s.frag : ''));
+
+  function useLink(text) {
+    const frag = String(text).split('#')[1] || '', p = new URLSearchParams(frag);
+    if (!p.get('access_token') || !p.get('id_token')) return false;
+    const exp = Date.now() + (+p.get('expires_in') || 3600) * 1000 - 60000;
+    try { localStorage.setItem(KEY, JSON.stringify({ frag, exp })); } catch {}
+    location.reload();
+    return true;
+  }
+  function showLogin() {
+    const boot = document.getElementById('boot');
+    boot.classList.add('auth');
+    boot.innerHTML = `<div class="panel login">
+      <h2 class="t">Sign in with Riot</h2>
+      <ol><li>Tap <b>Open Riot sign-in</b> and log in.</li>
+        <li>You end up on a playvalorant.com page (it may say not found). <b>Copy that page's link.</b></li>
+        <li>Come back here and tap <b>Paste link</b>.</li></ol>
+      <a class="btn danger" href="${AUTH}" target="_blank" rel="noopener">Open Riot sign-in</a>
+      <button class="btn" id="lPaste">Paste link</button>
+      <input id="lIn" placeholder="…or paste it here" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="lErr" id="lErr"></div></div>`;
+    const err = () => document.getElementById('lErr').textContent = "That isn't the playvalorant.com link with a token in it.";
+    document.getElementById('lPaste').onclick = () => navigator.clipboard.readText()
+      .then(t => useLink(t) || err(), () => document.getElementById('lIn').focus());
+    document.getElementById('lIn').oninput = e => useLink(e.target.value) || err();
+  }
+
+  window.Native = {
+    login: () => load() ? location.reload() : showLogin(),
+    logout: () => { drop(); document.getElementById('sheet').classList.remove('open'); showLogin(); },
+    version: () => Infinity, // the web version is always current; never shows the APK update banner
+    update() {},
+    http(id, method, url, headers, body) {
+      const h = JSON.parse(headers);
+      (riot(url)
+        ? fetch('/api/riot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method, url, headers: h, body }) })
+        : fetch(url, { method, headers: h, body: body || undefined }))
+        .then(async r => [r.status, await r.text()], e => [0, String(e)])
+        .then(([st, b]) => { if (st === 401 && riot(url)) drop(); window.__cb(id, st, b); });
+    },
+  };
+})();
+</script>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');

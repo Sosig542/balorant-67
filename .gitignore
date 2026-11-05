@@ -5,3 +5,9 @@ build/
 *.keystore
 # tool caches
 .impeccable/
+# video render intermediates
+brag-output/work/
+# PWA build copy (vercel.json copies assets/index.html here)
+pwa/index.html
+.vercel
+

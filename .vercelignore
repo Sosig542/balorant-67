@@ -1,0 +1,7 @@
+# Upload only what the PWA needs (never the keystore, APK or build output)
+/*
+!/assets
+!/api
+!/pwa
+!/vercel.json
+/pwa/index.html

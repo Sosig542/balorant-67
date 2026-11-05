@@ -1,0 +1,4 @@
+{
+  "buildCommand": "cp assets/index.html pwa/index.html",
+  "outputDirectory": "pwa"
+}
