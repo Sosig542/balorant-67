@@ -715,6 +715,20 @@ function matchCard(r, i) {
 const details = new Map(); let dGen = 0; // last few full matches kept in memory (each is ~1 MB)
 const ROUND_ICON = { Elimination: 'r-elim', Detonate: 'r-bomb', Defuse: 'r-defuse' };
 
+// Match details often leave other players' names blank; the game client fills them from name-service.
+const names = new Map(); // puuid -> { name, tag }, kept for the session
+async function fillNames(m) {
+  const missing = (m.players || []).map(p => p.subject).filter(s => !names.has(s));
+  if (missing.length) {
+    const res = await req('PUT', `${M.pd}/name-service/v2/players`, M.H, JSON.stringify(missing)).catch(() => []);
+    for (const n of Array.isArray(res) ? res : []) names.set(n.Subject, { name: n.GameName, tag: n.TagLine });
+  }
+  for (const p of m.players || []) {
+    const n = names.get(p.subject);
+    if (n?.name) { p.gameName = n.name; p.tagLine = n.tag; }
+  }
+}
+
 async function openMatch(id) {
   const g = ++dGen, d = $('detail');
   d.classList.add('open'); d.setAttribute('aria-hidden', 'false'); d.scrollTop = 0;
@@ -723,6 +737,7 @@ async function openMatch(id) {
     let m = details.get(id);
     if (!m) {
       m = await get(`${M.pd}/match-details/v1/matches/${id}`, M.H);
+      await fillNames(m);
       details.set(id, m);
       if (details.size > 5) details.delete(details.keys().next().value);
     }
@@ -803,7 +818,7 @@ function renderDetail(m, row) {
     const a = M.A.agent[(x.p.characterId || '').toLowerCase()], t = x.p.competitiveTier ? M.A.tiers.find(z => z.tier === x.p.competitiveTier) : null;
     return `<div class="prow${x === me ? ' me' : ''}" style="--i:${i}">
       ${a ? `<img class="pa" src="${esc(a.icon)}" alt="">` : ''}
-      <div class="pn"><b>${esc(x.p.gameName || 'Player')}</b> <span>#${esc(x.p.tagLine || '')}</span>
+      <div class="pn"><b>${esc(x.p.gameName || 'Hidden player')}</b>${x.p.tagLine ? ` <span>#${esc(x.p.tagLine)}</span>` : ''}
         <div class="ps">${x.adr} ADR · ${x.hs}% HS · ${x.fb} FB</div></div>
       ${t?.icon ? `<img class="pt" src="${esc(t.icon)}" alt="${esc(t.name)}">` : ''}
       <div class="pk"><b>${x.k}/${x.d}/${x.a}</b><span>${x.acs} ACS</span></div>
