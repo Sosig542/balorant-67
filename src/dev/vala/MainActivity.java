@@ -1,8 +1,17 @@
 package dev.vala;
 
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageInstaller;
 import android.graphics.Bitmap;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
@@ -62,6 +71,9 @@ public class MainActivity extends Activity {
                 if (!url.startsWith(APP)) intercept(url);
             }
         });
+        IntentFilter f = new IntentFilter(ACTION_INSTALL);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(installStatus, f, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(installStatus, f);
         // Riot's session cookie is kept, so after the first login this redirects straight back with a fresh token.
         web.loadUrl(AUTH);
     }
@@ -127,6 +139,28 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public int version() {
+            try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode; } catch (Exception e) { return 0; }
+        }
+
+        // Only ever installs an APK from this app's own GitHub releases.
+        @JavascriptInterface
+        public void update(String url) {
+            if (!url.startsWith(RELEASES)) return;
+            web.post(() -> {
+                if (!isApp()) return;
+                if (!getPackageManager().canRequestPackageInstalls()) {
+                    // one-time "allow installs from Balorant" screen; install resumes in onResume
+                    pendingUpdate = url;
+                    js("onUpdateStatus('permission')");
+                    startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+                    return;
+                }
+                new Thread(() -> install(url)).start();
+            });
+        }
+
+        @JavascriptInterface
         public void logout() {
             web.post(() -> {
                 WebStorage.getInstance().deleteAllData();
@@ -136,6 +170,74 @@ public class MainActivity extends Activity {
                 cm.removeAllCookies(done -> { cm.flush(); web.clearHistory(); web.loadUrl(AUTH); });
             });
         }
+    }
+
+    // --- self-update: stream the APK into a PackageInstaller session; Android shows its own confirm screen ---
+    static final String RELEASES = "https://github.com/Sosig542/balorant-67/releases/download/";
+    static final String ACTION_INSTALL = "dev.vala.app.INSTALL_STATUS";
+    String pendingUpdate;
+
+    void js(String code) { web.post(() -> web.evaluateJavascript(code, null)); }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (pendingUpdate != null) {
+            String url = pendingUpdate;
+            pendingUpdate = null;
+            if (getPackageManager().canRequestPackageInstalls()) new Thread(() -> install(url)).start();
+            else js("onUpdateStatus('denied')");
+        }
+    }
+
+    final BroadcastReceiver installStatus = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            int st = i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+            if (st == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                Intent confirm = i.getParcelableExtra(Intent.EXTRA_INTENT);
+                if (confirm != null) startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } else if (st != PackageInstaller.STATUS_SUCCESS) { // on success the app is replaced and restarted
+                String msg = i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+                js("onUpdateStatus('error'," + JSONObject.quote(msg == null ? "Install cancelled" : msg) + ")");
+            }
+        }
+    };
+
+    void install(String url) {
+        try {
+            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(); // GitHub redirects to its file host
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(30000);
+            long total = c.getContentLengthLong();
+            PackageInstaller pi = getPackageManager().getPackageInstaller();
+            int id = pi.createSession(new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL));
+            try (PackageInstaller.Session s = pi.openSession(id)) {
+                try (InputStream in = c.getInputStream(); OutputStream out = s.openWrite("base.apk", 0, total)) {
+                    byte[] buf = new byte[65536];
+                    long done = 0; int last = -1;
+                    for (int n; (n = in.read(buf)) > 0; ) {
+                        out.write(buf, 0, n);
+                        done += n;
+                        int pct = total > 0 ? (int) (done * 100 / total) : -1;
+                        if (pct != last) { last = pct; js("onUpdateProgress(" + pct + ")"); }
+                    }
+                    s.fsync(out);
+                }
+                Intent i = new Intent(ACTION_INSTALL).setPackage(getPackageName());
+                PendingIntent p = PendingIntent.getBroadcast(this, id, i, PendingIntent.FLAG_UPDATE_CURRENT
+                        | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0)); // installer fills in the status extras
+                s.commit(p.getIntentSender());
+            }
+        } catch (Exception e) {
+            js("onUpdateStatus('error'," + JSONObject.quote(e.toString()) + ")");
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        unregisterReceiver(installStatus);
+        super.onDestroy();
     }
 
     static String read(InputStream in) throws Exception {

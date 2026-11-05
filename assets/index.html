@@ -237,6 +237,16 @@
   .prow .pk { text-align:right; flex:none; } .prow .pk b { display:block; font:700 14px var(--mono); } .prow .pk span { color:var(--dim); font:500 11px var(--mono); }
   @keyframes pop { from { opacity:0; transform:scale(.5); } }
 
+  /* ---------- update banner ---------- */
+  .upd { position:fixed; left:12px; right:12px; bottom:90px; z-index:25; display:flex; align-items:center; gap:12px; padding:12px 12px 12px 16px;
+    border-color:rgba(46,230,182,.45); transform:translateY(calc(100% + 110px)); transition:transform .5s var(--ease); }
+  .upd.show { transform:none; }
+  .upd .txt { flex:1; min-width:0; }
+  .upd b { display:block; font:800 18px/1.1 var(--disp); text-transform:uppercase; }
+  .upd span { color:var(--dim); font:500 12px var(--mono); }
+  .upd .btn { width:auto; margin:0; padding:11px 14px; background:var(--mint); border-color:var(--mint); color:var(--ink); white-space:nowrap; }
+  .upd .x { width:32px; height:32px; color:var(--dim); font:600 20px var(--mono); }
+
   /* ---------- nav ---------- */
   nav { position:fixed; left:12px; right:12px; bottom:12px; z-index:20; display:flex; height:66px; background:rgba(15,23,32,.86);
     backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid var(--line); clip-path:var(--cut); }
@@ -349,6 +359,12 @@
 
 <div class="detail" id="detail" aria-hidden="true"><div id="dBody"></div></div>
 
+<div class="panel upd" id="upd" role="status">
+  <div class="txt"><b id="updTitle">Update available</b><span id="updMsg"></span></div>
+  <button class="btn" id="updBtn">Update</button>
+  <button class="x" aria-label="Dismiss" onclick="$('upd').classList.remove('show')">×</button>
+</div>
+
 <div class="sheet" id="sheet">
   <div class="scrim" onclick="sheet(false)"></div>
   <div class="sheetBox panel">
@@ -448,11 +464,31 @@ async function main() {
   $('who').innerHTML = `${esc(user.acct?.game_name)}<small>#${esc(user.acct?.tag_line)} &nbsp;/&nbsp; ${esc(region.toUpperCase())} SERVER</small>`;
   $('who').classList.add('in');
   hideBoot();
+  setTimeout(checkUpdate, 2500); // after the first screen settles
   // independent so one failing doesn't blank the other
   loadStore(pd, puuid, H).catch(e => { $('store').innerHTML = ''; fail($('store'), e); });
   loadMatches(pd, puuid, H, version.riotClientVersion).catch(e => { $('matches').innerHTML = $('statsBody').innerHTML = ''; fail($('matches'), e); fail($('statsBody'), e); });
 }
 main().catch(e => { $('who').textContent = 'Offline'; $('store').innerHTML = ''; fail($('store'), e); });
+
+// --- In-app updates: newest GitHub release (tag v<versionCode>) vs the installed versionCode ---
+const REPO = 'Sosig542/balorant-67';
+async function checkUpdate() {
+  const r = await get(`https://api.github.com/repos/${REPO}/releases/latest`, { Accept: 'application/vnd.github+json' }).catch(() => null);
+  const latest = parseInt(String(r?.tag_name || '').replace(/^v/, ''), 10), apk = r?.assets?.find(a => a.name.endsWith('.apk'));
+  if (!apk || !(latest > Native.version())) return;
+  $('updTitle').textContent = `${r.name || 'New version'} is out`;
+  $('updMsg').textContent = (r.body || 'Tap update to install it.').split(/\r?\n/)[0].slice(0, 90);
+  $('updBtn').onclick = () => { $('updBtn').disabled = true; $('updBtn').textContent = 'Starting…'; Native.update(apk.browser_download_url); };
+  $('upd').classList.add('show');
+}
+window.onUpdateProgress = p => { $('updBtn').textContent = p >= 0 ? `${p}%` : 'Downloading…'; if (p >= 100) $('updMsg').textContent = 'Confirm the install on the next screen.'; };
+window.onUpdateStatus = (s, msg) => {
+  const b = $('updBtn');
+  if (s === 'permission') { $('updMsg').textContent = 'Allow installs from Balorant, then come back.'; b.textContent = 'Waiting…'; return; }
+  b.disabled = false; b.textContent = 'Retry';
+  $('updMsg').textContent = s === 'denied' ? 'Installs from Balorant are still blocked.' : String(msg || 'Update failed').slice(0, 90);
+};
 
 // --- Store ---
 async function loadStore(pd, puuid, H) {

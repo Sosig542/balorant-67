@@ -3,3 +3,5 @@ build/
 *.idsig
 # signing key: never commit, back it up somewhere safe
 *.keystore
+# tool caches
+.impeccable/
