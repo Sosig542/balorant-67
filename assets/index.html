@@ -806,7 +806,13 @@ function matchCard(r, i) {
 const details = new Map(); let dGen = 0; // last few full matches kept in memory (each is ~1 MB)
 const ROUND_ICON = { Elimination: 'r-elim', Detonate: 'r-bomb', Defuse: 'r-defuse' };
 
-// Match details often leave other players' names blank; the game client fills them from name-service.
+// Match details leave most names blank and don't say who chose to hide theirs, so only look up players
+// with a known reason: you, your party, or anyone the Live tab saw unhidden in this exact match.
+function knownPlayers(m, id) {
+  const all = m.players || [], me = all.find(p => p.subject === M.puuid), seen = new Set(ls.get('livevis:' + id) || []);
+  return all.filter(p => !p.gameName && (p === me || (me?.partyId && p.partyId === me.partyId) || seen.has(p.subject)));
+}
+
 const names = new Map(); // puuid -> { name, tag }, kept for the session
 async function fillNames(m) {
   const missing = (m.players || []).map(p => p.subject).filter(s => !names.has(s));
@@ -828,7 +834,7 @@ async function openMatch(id) {
     let m = details.get(id);
     if (!m) {
       m = await get(`${M.pd}/match-details/v1/matches/${id}`, M.H);
-      await fillNames(m);
+      await fillNames({ players: knownPlayers(m, id) });
       details.set(id, m);
       if (details.size > 5) details.delete(details.keys().next().value);
     }
@@ -996,6 +1002,7 @@ async function pollLive() {
       return;
     }
     lastLiveId = s.id;
+    if (s.phase === 'In game') ls.set('livevis:' + s.id, s.players.filter(isOpen).map(p => p.Subject)); // for the post-match scoreboard
     const key = s.phase + s.id + s.players.map(p => p.CharacterID + p.Subject).join();
     if (key === liveKey) return;
     await fillNames({ players: s.players.filter(isOpen).map(p => ({ subject: p.Subject })) });
