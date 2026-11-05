@@ -1,0 +1,5 @@
+build/
+*.apk
+*.idsig
+# signing key: never commit, back it up somewhere safe
+*.keystore
