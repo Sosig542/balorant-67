@@ -255,10 +255,16 @@
   .upd .btn { width:auto; margin:0; padding:11px 14px; background:var(--mint); border-color:var(--mint); color:var(--ink); white-space:nowrap; }
   .upd .x { width:32px; height:32px; color:var(--dim); font:600 20px var(--mono); }
 
+  /* ---------- live ---------- */
+  .lHead { padding:16px; margin:14px 0 4px; }
+  .lHead .big2 { font:900 34px/1 var(--disp); text-transform:uppercase; margin-top:6px; }
+  .avg { display:flex; align-items:center; gap:8px; color:var(--bone); font:700 12px var(--mono); }
+  .avg img { width:24px; height:24px; }
+
   /* ---------- nav ---------- */
   nav { position:fixed; left:12px; right:12px; bottom:12px; z-index:20; display:flex; height:66px; background:rgba(15,23,32,.86);
     backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid var(--line); clip-path:var(--cut); }
-  #ind { position:absolute; top:0; left:0; width:33.333%; height:3px; background:var(--red); transition:transform .5s cubic-bezier(.7,0,.2,1); }
+  #ind { position:absolute; top:0; left:0; width:25%; height:3px; background:var(--red); transition:transform .5s cubic-bezier(.7,0,.2,1); }
   nav button { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; color:var(--dim);
     font:600 11px var(--mono); letter-spacing:.16em; text-transform:uppercase; transition:color .3s; }
   nav button svg { width:22px; height:22px; transition:transform .45s var(--ease), color .3s; }
@@ -324,6 +330,7 @@
   <symbol id="i-store" viewBox="0 0 24 24"><path d="M3 9h18l-2 12H5z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/><path d="M9 14h6"/></symbol>
   <symbol id="i-matches" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 1v6M12 17v6M1 12h6M17 12h6"/><circle cx="12" cy="12" r="1" fill="currentColor"/></symbol>
   <symbol id="i-stats" viewBox="0 0 24 24"><path d="M4 21V12M10 21V5M16 21v-7M22 21H2"/><path d="M4 8l6-4 6 6 5-4"/></symbol>
+  <symbol id="i-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3v5h-5"/></symbol>
   <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v9"/><path d="M6 6.3a8 8 0 1 0 12 0"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8"/></symbol>
@@ -371,6 +378,7 @@
 
 <section id="store" class="on"></section>
 <section id="matches"></section>
+<section id="live"></section>
 <section id="stats"><div id="rank"></div><div id="statsBody"></div></section>
 
 <nav>
@@ -378,6 +386,7 @@
   <button data-t="store" class="on"><svg><use href="#i-store"/></svg>Store</button>
   <button data-t="matches"><svg><use href="#i-matches"/></svg>Matches</button>
   <button data-t="stats"><svg><use href="#i-stats"/></svg>Stats</button>
+  <button data-t="live"><svg><use href="#i-live"/></svg>Live</button>
 </nav>
 
 <div class="detail" id="detail" aria-hidden="true"><div id="dBody"></div></div>
@@ -486,6 +495,7 @@ tabs.forEach((b, i) => b.onclick = () => {
   document.querySelectorAll('section').forEach(s => s.classList.remove('on'));
   b.classList.add('on'); $(b.dataset.t).classList.add('on'); document.body.dataset.tab = b.dataset.t;
   $('ind').style.transform = `translateX(${i * 100}%)`;
+  liveTab(b.dataset.t === 'live');
   scrollTo({ top: 0 });
 });
 
@@ -539,6 +549,7 @@ async function main() {
   const puuid = user.sub, region = geo.affinities.live;
   const shard = { latam: 'na', br: 'na' }[region] || region;
   const pd = `https://pd.${shard}.a.pvp.net`;
+  GLZ = `https://glz-${region}-1.${shard}.a.pvp.net`;
   const H = { ...auth, 'X-Riot-Entitlements-JWT': ent.entitlements_token,
     'X-Riot-ClientVersion': version.riotClientVersion, 'X-Riot-ClientPlatform': PLATFORM };
   $('who').innerHTML = `${esc(user.acct?.game_name)}<small>#${esc(user.acct?.tag_line)} &nbsp;/&nbsp; ${esc(region.toUpperCase())} SERVER</small>`;
@@ -915,6 +926,99 @@ function renderDetail(m, row) {
     }
   }
   return html;
+}
+
+// --- Live: pregame / in-game lobby. Riot exposes who is in the game, never the live score. ---
+let GLZ, liveTimer, liveGen = 0, liveKey = '', lastLiveId = null;
+const peaks = new Map(); // puuid -> highest tier won in the current act
+const peakOf = (mmr, actId) => Math.max(0, ...Object.entries(mmr?.QueueSkills?.competitive?.SeasonalInfoBySeasonID?.[actId]?.WinsByTier || {})
+  .filter(([, wins]) => wins > 0).map(([tier]) => +tier));
+
+async function peakTier(id) {
+  if (peaks.has(id)) return peaks.get(id);
+  const now = Date.now(), act = M.A.seasons.find(x => x.parent && x.start <= now && now < x.end);
+  const r = await get(`${M.pd}/mmr/v1/players/${id}`, M.H).catch(() => null);
+  if (!r) return 0;
+  const p = peakOf(r, act?.id);
+  peaks.set(id, p);
+  return p;
+}
+
+async function findLive() {
+  const { puuid, H } = M;
+  const current = path => get(`${GLZ}/${path}/v1/players/${puuid}`, H).then(r => r?.MatchID)
+    .catch(e => { if (/^404/.test(e.message)) return null; throw e; });
+  const pre = await current('pregame');
+  if (pre) {
+    const m = await get(`${GLZ}/pregame/v1/matches/${pre}`, H);
+    return { phase: 'Agent select', id: pre, map: m.MapID, queue: m.QueueID, players: (m.AllyTeam?.Players || []).map(p => ({ ...p, ally: true })) };
+  }
+  const core = await current('core-game');
+  if (!core) return null;
+  const m = await get(`${GLZ}/core-game/v1/matches/${core}`, H), me = m.Players?.find(p => p.Subject === puuid);
+  return { phase: 'In game', id: core, map: m.MapID, queue: m.MatchmakingData?.QueueID, players: (m.Players || []).map(p => ({ ...p, ally: p.TeamID === me?.TeamID })) };
+}
+
+// Only the player's own hide-name choice decides: no name-service lookup for anyone hidden or unknown.
+const isOpen = p => p.Subject === M.puuid || p.PlayerIdentity?.Incognito === false;
+
+function avgRank(list) {
+  const tiers = list.map(p => p.peak).filter(Boolean);
+  if (!tiers.length) return '<span class="avg">No ranks</span>';
+  const t = M.A.tiers.find(x => x.tier === Math.round(tiers.reduce((a, b) => a + b, 0) / tiers.length));
+  return `<span class="avg">${t?.icon ? `<img src="${esc(t.icon)}" alt="">` : ''}Avg peak ${esc(t?.name ?? '')}</span>`;
+}
+
+function liveRow(p, i, showRank) {
+  const a = M.A.agent[(p.CharacterID || '').toLowerCase()], open = isOpen(p), n = open ? names.get(p.Subject) : null;
+  const t = showRank && open && p.peak ? M.A.tiers.find(x => x.tier === p.peak) : null;
+  return `<div class="prow${p.Subject === M.puuid ? ' me' : ''}" style="--i:${i}">
+    ${a ? `<img class="pa" src="${esc(a.icon)}" alt="">` : ''}
+    <div class="pn"><b>${esc(n?.name || 'Hidden player')}</b>${n?.tag ? ` <span>#${esc(n.tag)}</span>` : ''}
+      <div class="ps">${esc(a?.name ?? 'Choosing agent')}${t ? ` · Act peak ${esc(t.name)}` : ''}</div></div>
+    ${t?.icon ? `<img class="pt" src="${esc(t.icon)}" alt="">` : ''}
+  </div>`;
+}
+
+async function pollLive() {
+  if (!M) return;
+  const g = ++liveGen;
+  try {
+    const s = await findLive();
+    if (g !== liveGen) return;
+    if (!s) {
+      const done = lastLiveId;
+      if (liveKey === 'idle:' + done) return;
+      liveKey = 'idle:' + done;
+      $('live').innerHTML = `<h2>Live match</h2><div class="panel empty">${done
+        ? `Match finished.<button class="btn" onclick="refresh(); openMatch('${esc(done)}')">View scoreboard</button>`
+        : 'Not in a game right now. This updates by itself while the tab is open.'}</div>`;
+      return;
+    }
+    lastLiveId = s.id;
+    const key = s.phase + s.id + s.players.map(p => p.CharacterID + p.Subject).join();
+    if (key === liveKey) return;
+    await fillNames({ players: s.players.filter(isOpen).map(p => ({ subject: p.Subject })) });
+    await pool(s.players, 4, async p => { p.peak = await peakTier(p.Subject); });
+    if (g !== liveGen) return;
+    liveKey = key;
+    const ally = s.players.filter(p => p.ally), foe = s.players.filter(p => !p.ally), mp = M.A.map[s.map];
+    $('live').innerHTML = `<h2>Live match</h2><div class="panel lHead"><div class="kicker">${esc(s.phase)}</div>
+        <div class="big2">${esc(mp?.name || 'Unknown map')}</div><div class="dMeta">${esc(QUEUES[s.queue] ?? s.queue ?? '')}</div></div>
+      <div class="tHead mine"><span>Your team</span>${avgRank(ally)}</div>${ally.map((p, i) => liveRow(p, i, true)).join('')}
+      ${foe.length ? `<div class="tHead foe"><span>Enemy team</span>${avgRank(foe)}</div>${foe.map((p, i) => liveRow(p, i, false)).join('')}` : ''}`;
+  } catch (e) {
+    if (g === liveGen) { $('live').innerHTML = ''; fail($('live'), e); }
+  }
+}
+
+function liveTab(open) {
+  clearInterval(liveTimer);
+  if (!open) return;
+  if (!$('live').innerHTML) $('live').innerHTML = loader('Checking for a game');
+  liveKey = '';
+  pollLive();
+  liveTimer = setInterval(pollLive, 15000);
 }
 
 // tier 0 after the match = still in placements, so no RR to show
