@@ -261,6 +261,18 @@
   .avg { display:flex; align-items:center; gap:8px; color:var(--bone); font:700 12px var(--mono); }
   .avg img { width:24px; height:24px; }
 
+  /* ---------- queue ---------- */
+  .qPanel { padding:16px; margin-top:12px; }
+  .qPanel .sel { margin-top:12px; height:46px; clip-path:none; border:1px solid var(--line); }
+  .qPanel .btn { margin-top:10px; }
+  .btn.go { background:var(--mint); border-color:var(--mint); color:var(--ink); }
+  .btn:disabled { opacity:.5; }
+  .qState { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:6px; }
+  .qState b { font:900 28px/1 var(--disp); text-transform:uppercase; }
+  .qState span { color:var(--dim); font:500 12px var(--mono); }
+  #qTime { color:var(--mint); font:700 20px var(--mono); }
+  .lHead .btn { margin-top:12px; }
+
   /* ---------- nav ---------- */
   nav { position:fixed; left:12px; right:12px; bottom:12px; z-index:20; display:flex; height:66px; background:rgba(15,23,32,.86);
     backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid var(--line); clip-path:var(--cut); }
@@ -397,6 +409,16 @@
   <button class="x" aria-label="Dismiss" onclick="$('upd').classList.remove('show')">×</button>
 </div>
 
+<div class="sheet" id="csheet">
+  <div class="scrim" onclick="confirmSheet(false)"></div>
+  <div class="sheetBox panel">
+    <h2 class="t" id="cTitle"></h2>
+    <p id="cText"></p>
+    <button class="btn danger" id="cOk"></button>
+    <button class="btn" onclick="confirmSheet(false)">Cancel</button>
+  </div>
+</div>
+
 <div class="sheet" id="sheet">
   <div class="scrim" onclick="sheet(false)"></div>
   <div class="sheetBox panel">
@@ -473,7 +495,15 @@ const loader = t => `<div class="loader"><svg viewBox="0 0 64 64"><circle class=
 const fail = (el, e) => { hideBoot(); el.insertAdjacentHTML('afterbegin', `<div class="panel err">${esc(e.message)}</div>`); };
 const sheet = open => $('sheet').classList.toggle('open', open);
 // Android back: close whatever is on top; returns false when there is nothing to close (app then exits)
+// one confirm sheet for queue actions: confirmSheet(title, text, okLabel, onOk) opens it, confirmSheet(false) closes
+function confirmSheet(title, text, ok, run) {
+  if (title === false) return $('csheet').classList.remove('open');
+  $('cTitle').textContent = title; $('cText').textContent = text; $('cOk').textContent = ok;
+  $('cOk').onclick = () => { confirmSheet(false); run(); };
+  $('csheet').classList.add('open');
+}
 window.goBack = () => {
+  if ($('csheet').classList.contains('open')) { confirmSheet(false); return true; }
   if ($('sheet').classList.contains('open')) { sheet(false); return true; }
   if ($('detail').classList.contains('open')) { closeMatch(); return true; }
   return false;
@@ -993,15 +1023,17 @@ async function pollLive() {
     const s = await findLive();
     if (g !== liveGen) return;
     if (!s) {
-      const done = lastLiveId;
-      if (liveKey === 'idle:' + done) return;
-      liveKey = 'idle:' + done;
-      $('live').innerHTML = `<h2>Live match</h2><div class="panel empty">${done
-        ? `Match finished.<button class="btn" onclick="refresh(); openMatch('${esc(done)}')">View scoreboard</button>`
-        : 'Not in a game right now. This updates by itself while the tab is open.'}</div>`;
+      const done = lastLiveId, pt = await party();
+      if (g !== liveGen) return;
+      const key = 'idle:' + done + JSON.stringify(pt && [pt.State, pt.MatchmakingData?.QueueID, pt.Members?.map(m => m.Subject + m.IsOwner)]);
+      if (key === liveKey) return;
+      liveKey = key;
+      $('live').innerHTML = `<h2>Live match</h2>${done ? `<div class="panel empty">Match finished.
+          <button class="btn" onclick="refresh(); openMatch('${esc(done)}')">View scoreboard</button></div>` : ''}${queuePanel(pt)}`;
       return;
     }
-    lastLiveId = s.id;
+    M.queuedAt = null;
+    if (s.phase === 'In game') lastLiveId = s.id; // a dodged agent select never becomes a match
     if (s.phase === 'In game') ls.set('livevis:' + s.id, s.players.filter(isOpen).map(p => p.Subject)); // for the post-match scoreboard
     const key = s.phase + s.id + s.players.map(p => p.CharacterID + p.Subject).join();
     if (key === liveKey) return;
@@ -1011,13 +1043,52 @@ async function pollLive() {
     liveKey = key;
     const ally = s.players.filter(p => p.ally), foe = s.players.filter(p => !p.ally), mp = M.A.map[s.map];
     $('live').innerHTML = `<h2>Live match</h2><div class="panel lHead"><div class="kicker">${esc(s.phase)}</div>
-        <div class="big2">${esc(mp?.name || 'Unknown map')}</div><div class="dMeta">${esc(QUEUES[s.queue] ?? s.queue ?? '')}</div></div>
+        <div class="big2">${esc(mp?.name || 'Unknown map')}</div><div class="dMeta">${esc(QUEUES[s.queue] ?? s.queue ?? '')}</div>
+        ${s.phase === 'Agent select' ? `<button class="btn" onclick="dodge('${esc(s.id)}')">Dodge match</button>` : ''}</div>
       <div class="tHead mine"><span>Your team</span>${avgRank(ally)}</div>${ally.map((p, i) => liveRow(p, i, true)).join('')}
       ${foe.length ? `<div class="tHead foe"><span>Enemy team</span>${avgRank(foe)}</div>${foe.map((p, i) => liveRow(p, i, false)).join('')}` : ''}`;
   } catch (e) {
     if (g === liveGen) { $('live').innerHTML = ''; fail($('live'), e); }
   }
 }
+
+// --- Queue controls: they drive the Valorant client running on your PC (no client, no party) ---
+async function party() {
+  const p = await get(`${GLZ}/parties/v1/players/${M.puuid}`, M.H).catch(e => { if (/^404/.test(e.message)) return null; throw e; });
+  return p?.CurrentPartyID ? get(`${GLZ}/parties/v1/parties/${p.CurrentPartyID}`, M.H) : null;
+}
+const mmss = ms => { const s = Math.max(0, ms / 1000 | 0); return `${s / 60 | 0}:${String(s % 60).padStart(2, '0')}`; };
+setInterval(() => { const el = $('qTime'); if (el && M?.queuedAt) el.textContent = mmss(Date.now() - M.queuedAt); }, 1000);
+
+function queuePanel(pt) {
+  if (!pt) return '<div class="panel empty">Open Valorant on your PC to start a queue from here.</div>';
+  M.partyId = pt.ID;
+  const me = pt.Members?.find(m => m.Subject === M.puuid), lead = !!me?.IsOwner, n = pt.Members?.length || 1;
+  const searching = pt.State === 'MATCHMAKING', q = pt.MatchmakingData?.QueueID;
+  if (searching) M.queuedAt ??= Date.now(); else M.queuedAt = null;
+  const queues = (pt.EligibleQueues || []).filter(x => QUEUES[x] && x !== '');
+  return `<div class="panel qPanel"><div class="kicker">${n > 1 ? `Party of ${n}` : 'Solo'}</div>
+    <div class="qState"><b>${searching ? 'Searching' : 'In lobby'}</b>${searching ? `<span id="qTime">${mmss(Date.now() - M.queuedAt)}</span>` : `<span>${esc(QUEUES[q] ?? q ?? '')}</span>`}</div>
+    ${searching ? `<button class="btn" ${lead ? '' : 'disabled'} onclick="queueAct(this, 'matchmaking/leave')">Cancel queue</button>`
+      : `<label class="panel sel"><select aria-label="Game mode" ${lead ? '' : 'disabled'} onchange="setQueue(this)">${queues.map(x =>
+          `<option value="${esc(x)}"${x === q ? ' selected' : ''}>${esc(QUEUES[x])}</option>`).join('')}</select></label>
+        <button class="btn go" ${lead ? '' : 'disabled'} onclick="startQueue(this)">Start queue</button>`}
+    ${lead ? '' : '<p class="note" style="margin:10px 0 0">Only the party leader can start or cancel the queue.</p>'}
+  </div>`;
+}
+
+async function queueAct(btn, path, body = '') {
+  if (btn) btn.disabled = true;
+  try { await req('POST', `${GLZ}/parties/v1/parties/${M.partyId}/${path}`, M.H, body); }
+  catch (e) { fail($('live'), e); }
+  liveKey = ''; pollLive();
+}
+const setQueue = sel => queueAct(null, 'queue', JSON.stringify({ queueId: sel.value }));
+const startQueue = btn => confirmSheet('Start queue?', "Valorant loads straight into the match when one is found, with no accept step. Start only if you'll be at your PC in time, or you'll be AFK and penalised.", 'Start queue', () => queueAct(btn, 'matchmaking/join'));
+const dodge = id => confirmSheet('Dodge this match?', 'You leave agent select. Riot gives a short queue timeout, and in Competitive you lose RR.', 'Dodge', async () => {
+  try { await req('POST', `${GLZ}/pregame/v1/matches/${id}/quit`, M.H, ''); } catch (e) { fail($('live'), e); }
+  liveKey = ''; pollLive();
+});
 
 function liveTab(open) {
   clearInterval(liveTimer);
