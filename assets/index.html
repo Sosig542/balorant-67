@@ -542,7 +542,18 @@ function countUp(root) {
 // --- HTTP through the native bridge (no CORS) ---
 const cbs = {}; let seq = 0;
 window.__cb = (id, status, body) => { const f = cbs[id]; delete cbs[id]; f && f(status, body); };
-function req(method, url, headers = {}, body = '') {
+// Phones lose DNS/connections for a moment (Wi-Fi <-> data). Retry reads that never reached the server;
+// never retry POST/PUT, so a queue action can't be sent twice.
+async function req(method, url, headers = {}, body = '') {
+  for (let t = 0; ; t++) {
+    try { return await send1(method, url, headers, body); }
+    catch (e) {
+      if (method !== 'GET' || t >= 2 || !/^0 /.test(e.message)) throw e;
+      await new Promise(r => setTimeout(r, 800 * (t + 1)));
+    }
+  }
+}
+function send1(method, url, headers, body) {
   return new Promise((ok, no) => {
     const id = String(++seq);
     const timer = setTimeout(() => { delete cbs[id]; no(new Error(`No response: ${method} ${url.split('?')[0]}`)); }, 40000);
@@ -1022,6 +1033,7 @@ async function pollLive() {
   try {
     const s = await findLive();
     if (g !== liveGen) return;
+    $('liveNet')?.remove();
     if (!s) {
       const done = lastLiveId, pt = await party();
       if (g !== liveGen) return;
@@ -1048,7 +1060,10 @@ async function pollLive() {
       <div class="tHead mine"><span>Your team</span>${avgRank(ally)}</div>${ally.map((p, i) => liveRow(p, i, true)).join('')}
       ${foe.length ? `<div class="tHead foe"><span>Enemy team</span>${avgRank(foe)}</div>${foe.map((p, i) => liveRow(p, i, false)).join('')}` : ''}`;
   } catch (e) {
-    if (g === liveGen) { $('live').innerHTML = ''; fail($('live'), e); }
+    if (g !== liveGen) return;
+    if (liveKey && /^0 /.test(e.message)) { // keep what's on screen; the next check (15s) usually works
+      if (!$('liveNet')) $('live').insertAdjacentHTML('afterbegin', '<p class="note" id="liveNet">Connection dropped, retrying…</p>');
+    } else { $('live').innerHTML = ''; fail($('live'), e); }
   }
 }
 
@@ -1080,13 +1095,13 @@ function queuePanel(pt) {
 async function queueAct(btn, path, body = '') {
   if (btn) btn.disabled = true;
   try { await req('POST', `${GLZ}/parties/v1/parties/${M.partyId}/${path}`, M.H, body); }
-  catch (e) { fail($('live'), e); }
+  catch (e) { if (btn) btn.disabled = false; return fail($('live'), e); } // leave the error visible; don't refresh over it
   liveKey = ''; pollLive();
 }
 const setQueue = sel => queueAct(null, 'queue', JSON.stringify({ queueId: sel.value }));
 const startQueue = btn => confirmSheet('Start queue?', "Valorant loads straight into the match when one is found, with no accept step. Start only if you'll be at your PC in time, or you'll be AFK and penalised.", 'Start queue', () => queueAct(btn, 'matchmaking/join'));
 const dodge = id => confirmSheet('Dodge this match?', 'You leave agent select. Riot gives a short queue timeout, and in Competitive you lose RR.', 'Dodge', async () => {
-  try { await req('POST', `${GLZ}/pregame/v1/matches/${id}/quit`, M.H, ''); } catch (e) { fail($('live'), e); }
+  try { await req('POST', `${GLZ}/pregame/v1/matches/${id}/quit`, M.H, ''); } catch (e) { return fail($('live'), e); }
   liveKey = ''; pollLive();
 });
 
