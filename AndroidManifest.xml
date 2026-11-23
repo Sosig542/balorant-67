@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.vala.app" android:versionCode="8" android:versionName="1.8">
+    package="dev.vala.app" android:versionCode="9" android:versionName="1.9">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application android:label="Balorant" android:icon="@drawable/ic_launcher"
