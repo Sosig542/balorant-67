@@ -273,6 +273,19 @@
   #qTime { color:var(--mint); font:700 20px var(--mono); }
   .lHead .btn { margin-top:12px; }
 
+  /* ---------- friends ---------- */
+  .inv { display:flex; gap:8px; margin-top:10px; }
+  .inv input { flex:1; min-width:0; height:46px; padding:0 12px; background:var(--ink2); border:1px solid var(--line); color:var(--bone); font:500 15px var(--mono); outline:none; }
+  .inv input:focus { border-color:var(--mint); }
+  .inv .btn { width:auto; margin:0; padding:0 18px; }
+  .fRow { display:flex; align-items:center; gap:12px; padding:10px 12px; margin-bottom:6px; background:rgba(21,32,43,.75); border:1px solid var(--line); }
+  .dot { width:10px; height:10px; border-radius:50%; flex:none; background:var(--line); }
+  .dot.on { background:var(--mint); } .dot.game { background:var(--red); } .dot.away { background:var(--gold); }
+  .fRow .pn { flex:1; min-width:0; }
+  .fRow .pn b { font:700 15px var(--body); } .fRow .pn span { color:var(--dim); font:500 12px var(--mono); }
+  .fRow .ps { color:var(--dim); font:500 11px var(--mono); margin-top:2px; }
+  .fRow .btn { width:auto; margin:0; padding:9px 14px; font-size:11px; }
+
   /* ---------- nav ---------- */
   nav { position:fixed; left:12px; right:12px; bottom:12px; z-index:20; display:flex; height:66px; background:rgba(15,23,32,.86);
     backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid var(--line); clip-path:var(--cut); }
@@ -390,7 +403,14 @@
 
 <section id="store" class="on"></section>
 <section id="matches"></section>
-<section id="live"></section>
+<section id="live"><div id="liveBody"></div>
+  <h2>Friends</h2>
+  <div class="panel qPanel"><div class="kicker">Invite by Riot ID</div>
+    <div class="inv"><input id="invIn" placeholder="Name#TAG" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="btn go" onclick="inviteId(this)">Invite</button></div>
+    <p class="note" id="invMsg" style="margin:8px 0 0"></p></div>
+  <div id="fList"></div>
+</section>
 <section id="stats"><div id="rank"></div><div id="statsBody"></div></section>
 
 <nav>
@@ -1040,7 +1060,7 @@ async function pollLive() {
       const key = 'idle:' + done + JSON.stringify(pt && [pt.State, pt.MatchmakingData?.QueueID, pt.Members?.map(m => m.Subject + m.IsOwner)]);
       if (key === liveKey) return;
       liveKey = key;
-      $('live').innerHTML = `<h2>Live match</h2>${done ? `<div class="panel empty">Match finished.
+      $('liveBody').innerHTML = `<h2>Live match</h2>${done ? `<div class="panel empty">Match finished.
           <button class="btn" onclick="refresh(); openMatch('${esc(done)}')">View scoreboard</button></div>` : ''}${queuePanel(pt)}`;
       return;
     }
@@ -1054,7 +1074,7 @@ async function pollLive() {
     if (g !== liveGen) return;
     liveKey = key;
     const ally = s.players.filter(p => p.ally), foe = s.players.filter(p => !p.ally), mp = M.A.map[s.map];
-    $('live').innerHTML = `<h2>Live match</h2><div class="panel lHead"><div class="kicker">${esc(s.phase)}</div>
+    $('liveBody').innerHTML = `<h2>Live match</h2><div class="panel lHead"><div class="kicker">${esc(s.phase)}</div>
         <div class="big2">${esc(mp?.name || 'Unknown map')}</div><div class="dMeta">${esc(QUEUES[s.queue] ?? s.queue ?? '')}</div>
         ${s.phase === 'Agent select' ? `<button class="btn" onclick="dodge('${esc(s.id)}')">Dodge match</button>` : ''}</div>
       <div class="tHead mine"><span>Your team</span>${avgRank(ally)}</div>${ally.map((p, i) => liveRow(p, i, true)).join('')}
@@ -1062,8 +1082,8 @@ async function pollLive() {
   } catch (e) {
     if (g !== liveGen) return;
     if (liveKey && /^0 /.test(e.message)) { // keep what's on screen; the next check (15s) usually works
-      if (!$('liveNet')) $('live').insertAdjacentHTML('afterbegin', '<p class="note" id="liveNet">Connection dropped, retrying…</p>');
-    } else { $('live').innerHTML = ''; fail($('live'), e); }
+      if (!$('liveNet')) $('liveBody').insertAdjacentHTML('afterbegin', '<p class="note" id="liveNet">Connection dropped, retrying…</p>');
+    } else { $('liveBody').innerHTML = ''; fail($('liveBody'), e); }
   }
 }
 
@@ -1095,20 +1115,112 @@ function queuePanel(pt) {
 async function queueAct(btn, path, body = '') {
   if (btn) btn.disabled = true;
   try { await req('POST', `${GLZ}/parties/v1/parties/${M.partyId}/${path}`, M.H, body); }
-  catch (e) { if (btn) btn.disabled = false; return fail($('live'), e); } // leave the error visible; don't refresh over it
+  catch (e) { if (btn) btn.disabled = false; return fail($('liveBody'), e); } // leave the error visible; don't refresh over it
   liveKey = ''; pollLive();
 }
 const setQueue = sel => queueAct(null, 'queue', JSON.stringify({ queueId: sel.value }));
 const startQueue = btn => confirmSheet('Start queue?', "Valorant loads straight into the match when one is found, with no accept step. Start only if you'll be at your PC in time, or you'll be AFK and penalised.", 'Start queue', () => queueAct(btn, 'matchmaking/join'));
 const dodge = id => confirmSheet('Dodge this match?', 'You leave agent select. Riot gives a short queue timeout, and in Competitive you lose RR.', 'Dodge', async () => {
-  try { await req('POST', `${GLZ}/pregame/v1/matches/${id}/quit`, M.H, ''); } catch (e) { return fail($('live'), e); }
+  try { await req('POST', `${GLZ}/pregame/v1/matches/${id}/quit`, M.H, ''); } catch (e) { return fail($('liveBody'), e); }
   liveKey = ''; pollLive();
 });
+
+// --- Friends: roster + presence from Riot chat (Android native), invites through the party service ---
+let friends = null;
+const b64json = x => { try { return JSON.parse(decodeURIComponent(escape(atob(x)))); } catch { return null; } };
+const jwtBody = t => b64json(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(t.split('.')[1].length / 4) * 4, '='));
+
+function chatCall(...a) {
+  return new Promise((ok, no) => {
+    const id = String(++seq);
+    cbs[id] = (st, b) => st === 200 ? ok(b) : no(new Error('Friends list: ' + b));
+    Native.chat(id, ...a);
+  });
+}
+
+// Turns the raw chat stream into [{ id, name, tag, status, cls, online, valorant }]
+function parseChat(raw) {
+  const xml = x => new DOMParser().parseFromString(x, 'text/xml').documentElement;
+  const rosterIq = (raw.match(/<iq[^>]*id=["']roster_1["'][\s\S]*?<\/iq>/) || [''])[0];
+  const items = rosterIq ? [...xml(rosterIq).getElementsByTagName('item')] : [];
+  const pres = {};
+  for (const m of raw.match(/<presence\b[^>]*?(?:\/>|>[\s\S]*?<\/presence>)/g) || []) {
+    const el = xml(m), who = (el.getAttribute('from') || '').split('@')[0];
+    if (!who) continue;
+    if (el.getAttribute('type') === 'unavailable') { pres[who] = null; continue; }
+    const show = el.getElementsByTagName('show')[0]?.textContent || 'chat';
+    const val = el.getElementsByTagName('valorant')[0], p = val && b64json(val.getElementsByTagName('p')[0]?.textContent || '');
+    pres[who] = { show, val: !!val, loop: p?.sessionLoopState ?? p?.matchPresenceData?.sessionLoopState,
+      party: p?.partyState ?? p?.partyPresenceData?.partyState, queue: p?.queueId ?? p?.matchPresenceData?.queueId };
+  }
+  return items.filter(i => (i.getAttribute('subscription') || 'both') === 'both').map(i => {
+    const id = i.getAttribute('puuid') || (i.getAttribute('jid') || '').split('@')[0], idEl = i.getElementsByTagName('id')[0];
+    const pr = pres[id];
+    let status = 'Offline', cls = '';
+    if (pr) {
+      cls = pr.show === 'away' ? 'away' : 'on';
+      status = pr.show === 'away' ? 'Away' : 'Online';
+      if (pr.val) {
+        if (pr.loop === 'INGAME') { status = 'In a match'; cls = 'game'; }
+        else if (pr.loop === 'PREGAME') { status = 'Agent select'; cls = 'game'; }
+        else if (pr.party === 'MATCHMAKING') status = 'In queue' + (QUEUES[pr.queue] ? ' · ' + QUEUES[pr.queue] : '');
+        else status = 'In Valorant';
+      }
+    }
+    return { id, name: idEl?.getAttribute('name') || i.getAttribute('name') || 'Unknown', tag: idEl?.getAttribute('tagline') || '',
+      status, cls, online: !!pr, valorant: !!pr?.val };
+  }).sort((a, b) => (b.valorant - a.valorant) || (b.online - a.online) || a.name.localeCompare(b.name));
+}
+
+async function loadFriends(btn) {
+  if (typeof Native.chat !== 'function') { $('fList').innerHTML = '<div class="panel empty">The friends list works in the Android app for now. Invite by Riot ID works here.</div>'; return; }
+  if (btn) btn.disabled = true;
+  $('fList').innerHTML = loader('Loading friends');
+  try {
+    const pas = await req('GET', 'https://riot-geo.pas.si.riotgames.com/pas/v1/service/chat', { Authorization: M.H.Authorization });
+    const aff = jwtBody(String(pas))?.affinity;
+    const cfg = await get('https://clientconfig.rpg.riotgames.com/api/v1/config/player?namespace=chat', M.H);
+    const host = cfg?.['chat.affinities']?.[aff], domain = cfg?.['chat.affinity_domains']?.[aff] ?? aff;
+    if (!host) throw new Error(`Couldn't find the chat server for "${aff}"`);
+    friends = parseChat(await chatCall(host, domain, token, String(pas)));
+    renderFriends();
+  } catch (e) { $('fList').innerHTML = ''; fail($('fList'), e); $('fList').insertAdjacentHTML('beforeend', '<button class="btn" onclick="loadFriends(this)">Try again</button>'); }
+}
+
+function renderFriends() {
+  const on = friends.filter(x => x.online).length;
+  $('fList').innerHTML = `<div class="tHead mine"><span>${on} online</span><button class="btn" style="width:auto;margin:0;padding:8px 12px;font-size:11px" onclick="loadFriends(this)">Refresh</button></div>`
+    + (friends.length ? friends.map((x, i) => `<div class="fRow" style="--i:${i}"><span class="dot ${x.cls}"></span>
+        <div class="pn"><b>${esc(x.name)}</b>${x.tag ? ` <span>#${esc(x.tag)}</span>` : ''}<div class="ps">${esc(x.status)}</div></div>
+        ${x.valorant && x.cls !== 'game' && x.tag ? `<button class="btn go" onclick="invite(this, '${esc(x.name)}', '${esc(x.tag)}')">Invite</button>` : ''}</div>`).join('')
+      : '<div class="panel empty">No friends found.</div>');
+}
+
+async function invite(btn, name, tag) {
+  if (btn) btn.disabled = true;
+  const say = (t, ok) => { const m = $('invMsg'); if (m) { m.textContent = t; m.style.color = ok ? 'var(--mint)' : 'var(--red)'; } };
+  try {
+    const pt = await party();
+    if (!pt) throw new Error('Open Valorant on your PC first: invites come from your party there.');
+    await req('POST', `${GLZ}/parties/v1/parties/${pt.ID}/invites/name/${encodeURIComponent(name)}/tag/${encodeURIComponent(tag)}`, M.H, '');
+    say(`Invite sent to ${name}#${tag}`, true);
+    if (btn) btn.textContent = 'Sent';
+  } catch (e) {
+    say(/^404 /.test(e.message) ? `Couldn't invite ${name}#${tag}. Check the name and tag.` : String(e.message).split('\n')[0].slice(0, 120), false);
+    if (btn) btn.disabled = false;
+  }
+}
+function inviteId(btn) {
+  const [name, tag] = $('invIn').value.trim().split('#').map(x => x?.trim());
+  if (!name || !tag) { $('invMsg').textContent = 'Type it as Name#TAG'; $('invMsg').style.color = 'var(--red)'; return; }
+  invite(btn, name, tag);
+}
 
 function liveTab(open) {
   clearInterval(liveTimer);
   if (!open) return;
-  if (!$('live').innerHTML) $('live').innerHTML = loader('Checking for a game');
+  if (!$('liveBody').innerHTML) $('liveBody').innerHTML = loader('Checking for a game');
+  if (!$('fList').innerHTML) $('fList').innerHTML = '<button class="btn" onclick="loadFriends(this)">Show friends</button>';
   liveKey = '';
   pollLive();
   liveTimer = setInterval(pollLive, 15000);

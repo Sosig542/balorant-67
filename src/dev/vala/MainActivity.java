@@ -23,7 +23,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Socket;
 import java.net.URL;
+import javax.net.ssl.SSLSocketFactory;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import org.json.JSONObject;
@@ -133,6 +135,47 @@ public class MainActivity extends Activity {
             }
         }
 
+        // Friends list + online status come from Riot's chat service (XMPP), not the game servers.
+        // One short connection: sign in, ask for the roster, collect friends' presence, disconnect.
+        @JavascriptInterface
+        public void chat(String id, String host, String domain, String rso, String pas) {
+            web.post(() -> { if (isApp()) new Thread(() -> chatFetch(id, host, domain, rso, pas)).start(); });
+        }
+
+        void chatFetch(String id, String host, String domain, String rso, String pas) {
+            int code = 0;
+            String res;
+            if (!host.matches("[a-z0-9-]+\\.chat\\.si\\.riotgames\\.com") || !domain.matches("[a-z0-9-]+")) res = "Unexpected chat server: " + host;
+            else try (Socket s = SSLSocketFactory.getDefault().createSocket(host, 5223)) {
+                s.setSoTimeout(8000);
+                OutputStream o = s.getOutputStream();
+                InputStream in = s.getInputStream();
+                StringBuilder all = new StringBuilder();
+                String open = "<?xml version=\"1.0\"?><stream:stream to=\"" + domain + ".pvp.net\" version=\"1.0\" xmlns:stream=\"http://etherx.jabber.org/streams\">";
+                write(o, open);
+                until(in, all, "</stream:features>");
+                write(o, "<auth mechanism=\"X-Riot-RSO-PAS\" xmlns=\"urn:ietf:params:xml:ns:xmpp-sasl\"><rso_token>" + rso
+                        + "</rso_token><pas_token>" + pas + "</pas_token></auth>");
+                if (until(in, all, "success", "failure").contains("failure")) throw new Exception("Chat sign-in was refused");
+                write(o, open);
+                until(in, all, "</stream:features>");
+                write(o, "<iq id=\"_xmpp_bind1\" type=\"set\"><bind xmlns=\"urn:ietf:params:xml:ns:xmpp-bind\"><puuid-mode enabled=\"true\"/><resource>RC-balorant</resource></bind></iq>");
+                until(in, all, "_xmpp_bind1");
+                write(o, "<iq id=\"_xmpp_session1\" type=\"set\"><session xmlns=\"urn:ietf:params:xml:ns:xmpp-session\"/></iq>");
+                until(in, all, "_xmpp_session1");
+                write(o, "<iq type=\"get\" id=\"roster_1\"><query xmlns=\"jabber:iq:riotgames:roster\" last_state=\"true\"/></iq><presence/>");
+                s.setSoTimeout(2500); // friends' presence arrives right after; collect until it goes quiet
+                try { until(in, all, "\u0000never"); } catch (java.net.SocketTimeoutException quiet) { }
+                write(o, "</stream:stream>");
+                res = all.toString();
+                code = 200;
+            } catch (Exception e) {
+                res = e.toString();
+            }
+            String js = "window.__cb(" + JSONObject.quote(id) + "," + code + "," + JSONObject.quote(res) + ")";
+            web.post(() -> web.evaluateJavascript(js, null));
+        }
+
         @JavascriptInterface
         public void login() {
             web.post(() -> web.loadUrl(AUTH));
@@ -238,6 +281,23 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         unregisterReceiver(installStatus);
         super.onDestroy();
+    }
+
+    static void write(OutputStream o, String s) throws Exception {
+        o.write(s.getBytes(StandardCharsets.UTF_8));
+        o.flush();
+    }
+
+    // Reads into `all` until the text read during this call contains one of the markers; returns that text.
+    static String until(InputStream in, StringBuilder all, String... markers) throws Exception {
+        int from = all.length();
+        byte[] buf = new byte[16384];
+        for (int n; (n = in.read(buf)) > 0; ) {
+            all.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+            String got = all.substring(from);
+            for (String m : markers) if (got.contains(m)) return got;
+        }
+        throw new Exception("Chat connection closed");
     }
 
     static String read(InputStream in) throws Exception {
