@@ -502,7 +502,7 @@ if (!window.Native) (() => {
         ? fetch('/api/riot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method, url, headers: h, body }) })
         : fetch(url, { method, headers: h, body: body || undefined }))
         .then(async r => [r.status, await r.text()], e => [0, String(e)])
-        .then(([st, b]) => { if (st === 401 && riot(url)) drop(); window.__cb(id, st, b); });
+        .then(([st, b]) => { if ((st === 401 || (st === 400 && /BAD_CLAIMS/.test(b))) && riot(url)) drop(); window.__cb(id, st, b); });
     },
   };
 })();
@@ -537,6 +537,22 @@ window.onunhandledrejection = e => fail($('store'), e.reason instanceof Error ? 
 $('store').innerHTML = loader('Opening store');
 $('matches').innerHTML = loader('Pulling match history');
 $('statsBody').innerHTML = loader('Crunching numbers');
+
+// Logging in again reloads the page: remember the open tab so it comes back after the reload (once, within 2 min).
+let relogging = false;
+function relogin() {
+  if (relogging) return; // several requests fail at once; log in only once
+  relogging = true;
+  try { localStorage.setItem('reloginTab', JSON.stringify({ t: document.body.dataset.tab, at: Date.now() })); } catch {}
+  Native.login();
+}
+function restoreTab() {
+  try {
+    const s = JSON.parse(localStorage.getItem('reloginTab'));
+    localStorage.removeItem('reloginTab');
+    if (s && Date.now() - s.at < 120000) tabs.find(b => b.dataset.t === s.t)?.click();
+  } catch {}
+}
 
 const tabs = [...document.querySelectorAll('nav button')];
 tabs.forEach((b, i) => b.onclick = () => {
@@ -579,7 +595,8 @@ function send1(method, url, headers, body) {
     const timer = setTimeout(() => { delete cbs[id]; no(new Error(`No response: ${method} ${url.split('?')[0]}`)); }, 40000);
     cbs[id] = (s, b) => {
       clearTimeout(timer);
-      if (s === 401) { Native.login(); return no(new Error('Session expired, logging in again…')); }
+      // Riot's game servers answer an expired login with 400 BAD_CLAIMS instead of 401
+      if (s === 401 || (s === 400 && /BAD_CLAIMS|RSO Access Token/.test(b))) { relogin(); return no(new Error('Session expired, logging in again…')); }
       if (s < 200 || s >= 300) return no(new Error(`${s} ${method} ${url.split('?')[0]}\n${b.slice(0, 300)}`));
       try { ok(b ? JSON.parse(b) : null); } catch { ok(b); }
     };
@@ -616,6 +633,7 @@ async function main() {
   $('who').innerHTML = `${esc(user.acct?.game_name)}<small>#${esc(user.acct?.tag_line)} &nbsp;/&nbsp; ${esc(region.toUpperCase())} SERVER</small>`;
   $('who').classList.add('in');
   hideBoot();
+  restoreTab();
   setTimeout(checkUpdate, 2500); // after the first screen settles
   // independent so one failing doesn't blank the other
   loadStore(pd, puuid, H).catch(e => { $('store').innerHTML = ''; fail($('store'), e); });
@@ -725,6 +743,7 @@ async function loadMatches(pd, puuid, H, ver) {
   const [A, comp] = await Promise.all([assets(ver),
     get(`${pd}/mmr/v1/players/${puuid}/competitiveupdates?startIndex=0&endIndex=1&queue=competitive`, H).catch(() => null)]);
   M = { pd, puuid, H, A, queue: '', act: null, gen: 0 };
+  if (document.body.dataset.tab === 'live') pollLive(); // tab was opened (or restored) before this loaded
   renderRank(comp?.Matches?.[0], A.tiers);
 
   const now = Date.now();
